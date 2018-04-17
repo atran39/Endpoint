@@ -4,12 +4,14 @@ import os
 import subprocess
 import sys
 import shutil
+import argparse
 
 import json
-from datetime import datetime
+import yara
+# from datetime import datetime
 import re
 
-INIT_TIME= datetime.now().strftime("%m%d%y%H%M")
+# INIT_TIME= datetime.now().strftime("%m%d%y%H%M")
 
 def yara_analysis(input_stream):
     rule_rgx = re.compile(r"^(?P<rule>\w+) (?P<file>)$")
@@ -52,22 +54,43 @@ def nttrace_analysis(input_stream):
     return json.dumps(api_table, sort_keys=True, indent=4)
 
 if __name__ == "__main__":
-    if shutil.which(sys.argv[1]) is not None:
+    programDescription = "Generate report of yara analysis, cuckoo static analysis, and NtTrace analysis"
+
+    parser = argparse.ArgumentParser(description=programDescription)
+
+    #--Flags--
+    parser.add_argument('progname', help='Executable to be analyzed. Format should be [prog_path].exe')
+    parser.add_argument('timeout', type=float, default=0, help='Timeout for NtTrace analysis. Use 0 to indicate no limit')
+
+    args = parser.parse_args()
+    args_dict = vars(args)
+
+    if shutil.which(args_dict['progname']) is not None:
         prog = shutil.which(sys.argv[1])
     else:
         prog = os.path.abspath(sys.argv[1])
 
-    m = re.search(r"\\(?P<exe_name>\w+).exe$", prog)
-    filename = m.group('exe_name') + '_' + INIT_TIME + '.json'
+    timeout = args_dict['timeout']
 
-    yara_output = subprocess.run(['../yara/yara64.exe', './my_rules.yarc', prog], stdout=subprocess.PIPE)
+    # m = re.search(r"\\(?P<exe_name>\w+).exe$", prog)
+    # filename = m.group('exe_name') + '_' + INIT_TIME + '.json'
+    filename = 'endpoint.json'
+
+    yara_output = subprocess.run(['../yara/yara32.exe', './my_rules.yarc', prog], stdout=subprocess.PIPE)
     yara_json = json.loads(yara_analysis(yara_output.stdout))
 
     cuckoo_output = subprocess.run(['py', '-2', 'cuckoo_static_mod.py', prog], stdout=subprocess.PIPE)
     cuckoo_json = json.loads(cuckoo_output.stdout)
 
-    nttrace = subprocess.run(['../NtTrace/NtTrace.exe', '-pid', '-nl', '-time', prog], stdout=subprocess.PIPE)
-    nttrace_json = json.loads(nttrace_analysis(nttrace.stdout.decode("utf-8")))
+    nttrace = subprocess.Popen(['../NtTrace/NtTrace.exe', '-pid', '-nl', '-time', prog], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        if timeout != 0:
+            nt_out, nt_err = nttrace.communicate(timeout = timeout)
+    except subprocess.TimeoutExpired:
+        nttrace.kill()
+
+    nt_out, nt_err = nttrace.communicate()
+    nttrace_json = json.loads(nttrace_analysis(nt_out.decode("utf-8")))
 
     f = open('../json/' + filename, 'w')
     json.dump({"yara":yara_json, "cuckoo":cuckoo_json, "nttrace": nttrace_json}, f, sort_keys=True, indent=4)

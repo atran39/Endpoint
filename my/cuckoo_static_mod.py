@@ -350,4 +350,7 @@ if __name__ == "__main__":
 
     report = PortableExecutable(exe_name).run()
 
+    # filename = base_fn + '_' + 'static.json'
+    # f = open(filename, 'w')
     print json.dumps(report, sort_keys=True, indent=4)
+    # print report
